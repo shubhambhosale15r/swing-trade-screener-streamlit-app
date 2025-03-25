@@ -1,1 +1,1 @@
-# -swing-trade-screener-streamlit-app
+https://swingtradescanner.streamlit.app/
