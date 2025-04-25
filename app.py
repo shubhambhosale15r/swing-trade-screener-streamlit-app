@@ -227,7 +227,7 @@ def main():
     # High Momentum Stocks Overall
     if st.session_state.view_high_momentum_stocks:
         st.subheader("Top 10 High Momentum Stocks (All Universes Combined)")
-        loading = st.empty(); loading.markdown("<div class='loading-container'>...</div>", unsafe_allow_html=True)
+        loading = st.empty(); loading.markdown("<div class='loading-container'>Loading ...</div>", unsafe_allow_html=True)
         top10 = get_top_momentum_stocks_overall()
         loading.empty()
         if not top10.empty:
