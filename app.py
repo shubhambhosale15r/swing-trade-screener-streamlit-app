@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import time
 from datetime import datetime, timedelta
-from stocklist import *  # Ensure this file defines STOCK_UNIVERSE
+from stocklist import *  
 
 # Configuration
 PAGE_TITLE = "Swing Trade"
