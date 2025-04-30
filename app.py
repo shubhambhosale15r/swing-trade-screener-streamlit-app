@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -10,7 +11,7 @@ PAGE_TITLE = "Swing Trade"
 PAGE_ICON = "📈"
 LOADING_TEXT = "Analyzing Stocks..."
 
-# --- Basic App Setup ---
+# --- Streamlit Page Setup ---
 st.set_page_config(
     page_title=PAGE_TITLE,
     page_icon=PAGE_ICON,
@@ -20,14 +21,15 @@ st.set_page_config(
 
 # --- Session State Initialization ---
 def initialize_session_state():
-    if 'view_universe_rankings' not in st.session_state:
-        st.session_state.view_universe_rankings = False
-    if 'view_recommended_stocks' not in st.session_state:
-        st.session_state.view_recommended_stocks = False
-    if 'analyze_button_clicked' not in st.session_state:
-        st.session_state.analyze_button_clicked = False
-    if 'view_high_momentum_stocks' not in st.session_state:
-        st.session_state.view_high_momentum_stocks = False
+    keys = [
+        'view_universe_rankings',
+        'view_recommended_stocks',
+        'analyze_button_clicked',
+        'view_high_momentum_stocks'
+    ]
+    for key in keys:
+        if key not in st.session_state:
+            st.session_state[key] = False
 
 initialize_session_state()
 
@@ -35,7 +37,7 @@ initialize_session_state()
 def inject_custom_css():
     st.markdown(f"""
         <style>
-            /* ... existing CSS ... */
+            /* Add your custom CSS here */
         </style>
     """, unsafe_allow_html=True)
 
@@ -76,57 +78,79 @@ def create_sidebar():
 
 stock_universe_name, selected_stocks = create_sidebar()
 
-@st.cache_data(show_spinner=False)
-def download_stock_data(ticker, start_date, end_date, retries=3):
+# --- Data Download & Caching ---
+@st.cache_data(show_spinner=False, max_entries=10)
+def download_universe(symbols, start_date, end_date):
+    """
+    Download all tickers in one batch. Returns a dict mapping symbol to its DataFrame.
+    """
+    data = yf.download(
+        tickers=symbols,
+        start=start_date,
+        end=end_date,
+        group_by='ticker',
+        threads=True,
+        auto_adjust=True,
+        progress=False
+    )
+    dfs = {}
+    for sym in symbols:
+        try:
+            df = data[sym] if sym in data.columns.levels[0] else data.copy()
+        except Exception:
+            df = data.copy()
+        if not df.empty:
+            df = df.reset_index().drop_duplicates(subset='Date').set_index('Date')
+            dfs[sym] = df
+    return dfs
+
+
+def safe_download_universe(symbols, start, end, retries=3):
+    """Wrap batched download in retry/backoff loop."""
+    delay = 1
     for _ in range(retries):
         try:
-            df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
-            if df.empty:
-                raise ValueError(f"No data for {ticker}")
-            df['Date'] = df.index
-            df.reset_index(drop=True, inplace=True)
-            return df
-        except:
-            continue
-    return pd.DataFrame()
+            return download_universe(symbols, start, end)
+        except Exception:
+            time.sleep(delay)
+            delay *= 2
+    st.warning("Could not download data for universe after retries.")
+    return {}
 
-# Calculate returns over n trading days
-def calculate_returns(df, period):
-    if len(df) >= period:
-        prices = df['Close'].values
-        return ((prices[-1] - prices[-period]) / prices[-period]).item()
+# --- Analysis Functions ---
+def calculate_returns(prices, period):
+    if len(prices) >= period:
+        return (prices[-1] / prices[-period] - 1)
     return np.nan
 
-# Analyze a universe and compute momentum for each ticker
+
 def analyze_universe(name, symbols):
     end = datetime.today().date()
     start = end - timedelta(days=400)
-    rows = []
+    raw_data = safe_download_universe(symbols, start, end)
 
-    for t in symbols:
-        df = download_stock_data(t, start, end)
-        if df.empty: continue
-        df['Date'] = pd.to_datetime(df['Date'])
-        df.set_index('Date', inplace=True)
-        df = df[~df.index.duplicated()]
+    rows = []
+    for t, df in raw_data.items():
+        df = df.copy()
         df['Daily Return'] = df['Close'].pct_change()
         vol = df['Daily Return'].dropna().std() * np.sqrt(63)
 
-        r3 = calculate_returns(df, 63)
-        r1 = calculate_returns(df, 21)
-        r0 = calculate_returns(df, 5)
+        prices = df['Close'].values
+        r3 = calculate_returns(prices, 63)
+        r1 = calculate_returns(prices, 21)
+        r0 = calculate_returns(prices, 5)
 
-        if vol and pd.notna(r3) and pd.notna(r1) and pd.notna(r0):
-            mom = ((0.6*r3) + (0.3*r1) + (0.1*r0)) / vol
+        if vol and not np.isnan(r3) and not np.isnan(r1) and not np.isnan(r0):
+            mom = (0.6*r3 + 0.3*r1 + 0.1*r0) / vol
         else:
             mom = np.nan
 
         rows.append({
             "Ticker": t,
             "Momentum Score": mom,
-            "3-Month Return (%)": r3*100 if pd.notna(r3) else np.nan,
-            "1-Month Return (%)": r1*100 if pd.notna(r1) else np.nan,
-            "1-Week Return (%)": r0*100 if pd.notna(r0) else np.nan,
+            "3-Month Return (%)": r3*100,
+            "1-Month Return (%)": r1*100,
+            "1-Week Return (%)": r0*100,
             "Annualized Volatility": vol
         })
 
@@ -134,7 +158,7 @@ def analyze_universe(name, symbols):
     avg_score = df_res["Momentum Score"].mean() if not df_res.empty else np.nan
     return df_res, avg_score
 
-# Top universes by avg momentum
+
 def get_top_universes_by_momentum():
     data = []
     for name, syms in STOCK_UNIVERSE.items():
@@ -142,29 +166,24 @@ def get_top_universes_by_momentum():
         data.append({"Stock Universe": name, "Average Momentum Score": avg})
     return pd.DataFrame(data).sort_values("Average Momentum Score", ascending=False)
 
-# Top stocks in a universe
 
 def get_top_stocks_from_universe(name, symbols):
     df, _ = analyze_universe(name, symbols)
     return df.sort_values("Momentum Score", ascending=False) if not df.empty else pd.DataFrame()
 
-# --- Updated: Top 10 high momentum stocks overall ---
+
 def get_top_momentum_stocks_overall():
     all_dfs = []
     for syms in STOCK_UNIVERSE.values():
         df, _ = analyze_universe(None, syms)
         if not df.empty:
             all_dfs.append(df)
-
     if not all_dfs:
         return pd.DataFrame()
-
     combined = pd.concat(all_dfs, ignore_index=True)
     combined.dropna(subset=["Momentum Score"], inplace=True)
     combined.sort_values("Momentum Score", ascending=False, inplace=True)
-    # Remove duplicate tickers, keep the highest scored
-    unique = combined.drop_duplicates(subset=["Ticker"], keep="first")
-    return unique.head(10)
+    return combined.drop_duplicates(subset=["Ticker"]).head(10)
 
 # --- Main App Logic ---
 def main():
@@ -173,12 +192,10 @@ def main():
         st.subheader(f"Momentum Analysis: {stock_universe_name}")
         placeholder = st.empty()
         with placeholder:
-            st.markdown(f"""
-                <div class="loading-container">...
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<div class='loading-container'>{LOADING_TEXT}</div>", unsafe_allow_html=True)
         df, _ = analyze_universe(stock_universe_name, selected_stocks)
         placeholder.empty()
+
         if not df.empty:
             df = df.sort_values("Momentum Score", ascending=False)
             st.dataframe(df.style.format({
@@ -218,8 +235,8 @@ def main():
         progress.empty()
         df_unis = pd.DataFrame(rows).sort_values("Average Momentum Score", ascending=False)
         st.dataframe(df_unis.style.format({'Average Momentum Score':'{:.4f}'}), height=400)
-        c1,c2=st.columns(2)
-        best=df_unis.iloc[0]; worst=df_unis.iloc[-1]
+        c1, c2 = st.columns(2)
+        best = df_unis.iloc[0]; worst = df_unis.iloc[-1]
         c1.metric("Highest Momentum Universe", best['Stock Universe'], f"{best['Average Momentum Score']:.4f}")
         c2.metric("Lowest Momentum Universe", worst['Stock Universe'], f"{worst['Average Momentum Score']:.4f}")
         st.session_state.view_universe_rankings = False
