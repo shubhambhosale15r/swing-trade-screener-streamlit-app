@@ -130,6 +130,12 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
             # Debug: Log the response to check if it's valid
             print(f"Response for {ticker}: {response}")
 
+            # If the range is too large, retry with a smaller range
+            if 'error' in response and 'range_to cannot be 366 days greater than range_from' in response['error']:
+                print(f"Error: Date range too large for {ticker}, retrying with smaller range.")
+                start_date = start_date - timedelta(days=180)  # Shrink the date range by 180 days
+                continue
+
             if response.get('error'):
                 print(f"Error response for {ticker}: {response['error']}")
                 continue
