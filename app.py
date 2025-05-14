@@ -255,4 +255,8 @@ def main():
                     "Momentum Score": "{:.4f}"
                 }), use_container_width=True)
 
+if __name__ == "__main__":
+    main()
+
+
  
