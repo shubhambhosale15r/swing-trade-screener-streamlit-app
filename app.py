@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta
 from fyers_apiv3 import fyersModel
 from stocklist import STOCK_UNIVERSE  # Ensure this module provides the required stock universes
+from stqdm import stqdm  # Add the stqdm import
 
 # Configuration
 PAGE_TITLE = "Swing Trade"
@@ -146,13 +147,16 @@ def calculate_returns(df, period):
         return ((prices[-1] - prices[-period]) / prices[-period]).item()
     return np.nan
 
-# Analyze a universe and compute momentum for each ticker
+# Analyze a universe and compute momentum for each ticker with progress bar
 def analyze_universe(name, symbols):
     end = datetime.today().date()
     start = end - timedelta(days=400)
     rows = []
 
-    for t in symbols:
+    st.write(f"Analyzing universe: {name}...")
+
+    # Adding progress bar to loop over the stock symbols
+    for t in stqdm(symbols, desc="Processing symbols", leave=False):  # Add progress bar for symbols
         df = download_stock_data(t, start, end)
         if df.empty:
             continue
@@ -184,23 +188,24 @@ def analyze_universe(name, symbols):
     avg_score = df_res["Momentum Score"].mean() if not df_res.empty else np.nan
     return df_res, avg_score
 
-# Top universes by avg momentum
+# Top universes by avg momentum with progress bar
 def get_top_universes_by_momentum():
     data = []
-    for name, syms in STOCK_UNIVERSE.items():
+    # Add progress bar for universe analysis
+    for name, syms in stqdm(STOCK_UNIVERSE.items(), desc="Processing Universes", leave=False):
         _, avg = analyze_universe(name, syms)
         data.append({"Stock Universe": name, "Average Momentum Score": avg})
     return pd.DataFrame(data).sort_values("Average Momentum Score", ascending=False)
 
-# Top stocks in a universe
+# Top stocks in a universe with progress bar
 def get_top_stocks_from_universe(name, symbols):
     df, _ = analyze_universe(name, symbols)
     return df.sort_values("Momentum Score", ascending=False) if not df.empty else pd.DataFrame()
 
-# Top 10 high momentum stocks overall
+# Top 10 high momentum stocks overall with progress bar
 def get_top_momentum_stocks_overall():
     all_dfs = []
-    for syms in STOCK_UNIVERSE.values():
+    for syms in stqdm(STOCK_UNIVERSE.values(), desc="Processing All Universes", leave=False):
         df, _ = analyze_universe(None, syms)
         if not df.empty:
             all_dfs.append(df)
@@ -257,6 +262,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
- 
