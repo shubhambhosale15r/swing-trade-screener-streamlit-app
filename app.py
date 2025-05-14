@@ -1,10 +1,10 @@
 import streamlit as st
-import requests
 import pandas as pd
 import numpy as np
 import time
 from datetime import datetime, timedelta
-from stocklist import *  
+from fyers_apiv3 import fyersModel
+from stocklist import STOCK_UNIVERSE  # Ensure this module provides the required stock universes
 
 # Configuration
 PAGE_TITLE = "Swing Trade"
@@ -29,6 +29,8 @@ def initialize_session_state():
         st.session_state.analyze_button_clicked = False
     if 'view_high_momentum_stocks' not in st.session_state:
         st.session_state.view_high_momentum_stocks = False
+    if 'fyers_access_token' not in st.session_state:
+        st.session_state.fyers_access_token = ""
 
 initialize_session_state()
 
@@ -36,7 +38,7 @@ initialize_session_state()
 def inject_custom_css():
     st.markdown(f"""
         <style>
-            /* ... existing CSS ... */
+            /* Add your custom CSS here */
         </style>
     """, unsafe_allow_html=True)
 
@@ -56,6 +58,11 @@ display_header()
 # --- Sidebar ---
 def create_sidebar():
     with st.sidebar:
+        # Input for Fyers Access Token
+        token_input = st.text_input("Enter Fyers Access Token", type="password")
+        if token_input:
+            st.session_state.fyers_access_token = token_input
+
         universe_name = st.radio("Select Stock Universe", list(STOCK_UNIVERSE.keys()))
         selected_symbols = STOCK_UNIVERSE[universe_name]
         st.info(f"Selected: {universe_name}")
@@ -77,100 +84,55 @@ def create_sidebar():
 
 stock_universe_name, selected_stocks = create_sidebar()
 
-# --- NSE Session Helper ---
-def create_nse_session(
-    homepage_url: str = "https://www.nseindia.com",
-    retries: int = 5,
-    backoff_factor: float = 1.0,
-    timeout: float = 5.0
-) -> requests.Session:
-    """
-    Returns a requests.Session preloaded with cookies and realistic browser headers
-    from the NSE homepage. Retries on non-200 responses with exponential back-off.
-    """
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) "
-            "Gecko/20100101 Firefox/109.0"
-        ),
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;"
-            "q=0.9,image/avif,image/webp,*/*;q=0.8"
-        ),
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        "TE": "trailers",
-    }
+# --- Initialize Fyers API with dynamic token ---
+def initialize_fyers():
+    if st.session_state.fyers_access_token:
+        fyers = fyersModel.FyersModel(
+            client_id="YOUR_CLIENT_ID",  # Replace with your actual client ID
+            token=st.session_state.fyers_access_token,
+            log_path="/tmp/"
+        )
+        return fyers
+    else:
+        st.error("Please enter your Fyers Access Token in the sidebar.")
+        return None
 
-    session = requests.Session()
-    session.headers.update(headers)
+fyers = initialize_fyers()
 
-    delay = backoff_factor
-    for attempt in range(1, retries + 1):
-        try:
-            resp = session.get(homepage_url, timeout=timeout)
-            if resp.status_code == 200 and "html" in resp.headers.get("Content-Type", ""):
-                return session
-            else:
-                time.sleep(delay)
-                delay *= 2
-        except requests.RequestException:
-            time.sleep(delay)
-            delay *= 2
-
-    raise RuntimeError(f"Unable to establish NSE session after {retries} attempts.")
-
-# --- Data Download via NSE Scraping ---
+# --- Data Download via Fyers API ---
 @st.cache_data(show_spinner=False)
 def download_stock_data(ticker, start_date, end_date, retries=3):
     """
-    Fetch daily OHLCV for `ticker` from NSE between start_date and end_date,
-    using a browser-like session for cookies/headers.
+    Fetch daily OHLCV for `ticker` from Fyers between start_date and end_date.
     """
-    start_str = start_date.strftime("%d-%m-%Y")
-    end_str = end_date.strftime("%d-%m-%Y")
+    if fyers is None:
+        return pd.DataFrame()
 
-    url = "https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData"
-    params = {
-        "from": start_str,
-        "to": end_str,
-        "symbol": ticker,
-        "type": "priceVolumeDeliverable",
-        "series": "ALL"
-    }
+    symbol = f"NSE:{ticker}-EQ"
+    start_timestamp = int(datetime.combine(start_date, datetime.min.time()).timestamp())
+    end_timestamp = int(datetime.combine(end_date, datetime.min.time()).timestamp())
 
     for _ in range(retries):
         try:
-            session = create_nse_session()
-            resp = session.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-
-            payload = resp.json().get("data", [])
-            if not payload:
+            data = {
+                "symbol": symbol,
+                "resolution": "D",
+                "date_format": "1",
+                "range_from": start_date.strftime("%Y-%m-%d"),
+                "range_to": end_date.strftime("%Y-%m-%d"),
+                "cont_flag": "1"
+            }
+            response = fyers.history(data)
+            candles = response.get("candles", [])
+            if not candles:
                 raise ValueError(f"No data for {ticker}")
 
-            df = pd.DataFrame(payload)
-            df['Date'] = pd.to_datetime(df['mTIMESTAMP'], dayfirst=True)
-            df.set_index('Date', inplace=True)
+            df = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
+            df["Date"] = pd.to_datetime(df["timestamp"], unit="s")
+            df.set_index("Date", inplace=True)
             df.sort_index(inplace=True)
-
-            df.rename(columns={
-                'CH_OPENING_PRICE': 'Open',
-                'CH_TRADE_HIGH_PRICE': 'High',
-                'CH_TRADE_LOW_PRICE': 'Low',
-                'CH_CLOSING_PRICE': 'Close',
-                'CH_TOT_TRADED_QTY': 'Volume'
-            }, inplace=True)
-
-            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
             return df.reset_index()
-
         except Exception:
             time.sleep(1)
             continue
@@ -192,7 +154,8 @@ def analyze_universe(name, symbols):
 
     for t in symbols:
         df = download_stock_data(t, start, end)
-        if df.empty: continue
+        if df.empty:
+            continue
         df['Date'] = pd.to_datetime(df['Date'])
         df.set_index('Date', inplace=True)
         df = df[~df.index.duplicated()]
@@ -276,53 +239,12 @@ def main():
     # Recommended universes
     if st.session_state.view_recommended_stocks:
         st.subheader("Stock Universes Based on Momentum")
-        loading = st.empty(); loading.markdown("<div class='loading-container'>...</div>", unsafe_allow_html=True)
+        loading = st.empty()
+        loading.markdown("<div class='loading-container'>...</div>", unsafe_allow_html=True)
         top_unis = get_top_universes_by_momentum()
         loading.empty()
         for _, row in top_unis.iterrows():
             st.markdown(f"### {row['Stock Universe']} ({row['Average Momentum Score']:.4f})")
-            top5 = get_top_stocks_from_universe(row['Stock Universe'], STOCK_UNIVERSE[row['Stock Universe']])
-            if not top5.empty:
-                st.dataframe(top5[['Ticker','Momentum Score','3-Month Return (%)',
-                                   '1-Month Return (%)','1-Week Return (%)']], height=300)
-            else:
-                st.warning(f"No data for {row['Stock Universe']}")
-        st.session_state.view_recommended_stocks = False
-
-    # Universe rankings
-    if st.session_state.view_universe_rankings:
-        st.subheader("Stock Universes Ranking")
-        progress = st.progress(0)
-        rows = []
-        for i, (name, syms) in enumerate(STOCK_UNIVERSE.items()):
-            _, avg = analyze_universe(name, syms)
-            rows.append({"Stock Universe": name, "Average Momentum Score": avg})
-            progress.progress((i+1)/len(STOCK_UNIVERSE))
-        progress.empty()
-        df_unis = pd.DataFrame(rows).sort_values("Average Momentum Score", ascending=False)
-        st.dataframe(df_unis.style.format({'Average Momentum Score':'{:.4f}'}), height=400)
-        c1,c2 = st.columns(2)
-        best = df_unis.iloc[0]; worst = df_unis.iloc[-1]
-        c1.metric("Highest Momentum Universe", best['Stock Universe'], f"{best['Average Momentum Score']:.4f}")
-        c2.metric("Lowest Momentum Universe", worst['Stock Universe'], f"{worst['Average Momentum Score']:.4f}")
-        st.session_state.view_universe_rankings = False
-
-    # High Momentum Stocks Overall
-    if st.session_state.view_high_momentum_stocks:
-        st.subheader("Top 10 High Momentum Stocks (All Universes Combined)")
-        loading = st.empty(); loading.markdown("<div class='loading-container'>Loading ...</div>", unsafe_allow_html=True)
-        top10 = get_top_momentum_stocks_overall()
-        loading.empty()
-        if not top10.empty:
-            st.dataframe(top10.style.format({
-                "3-Month Return (%)": "{:.2f}%",
-                "1-Month Return (%)": "{:.2f}%",
-                "1-Week Return (%)": "{:.2f}%",
-                "Annualized Volatility": "{:.4f}",
-                "Momentum Score": "{:.4f}"}), use_container_width=True)
-        else:
-            st.warning("No data available across stock universes.")
-        st.session_state.view_high_momentum_stocks = False
-
-if __name__ == '__main__':
-    main()
+            top5 = get_top_stocks_from_universe(row['
+::contentReference[oaicite:17]{index=17}
+ 
