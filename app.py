@@ -243,8 +243,16 @@ def main():
         loading.markdown("<div class='loading-container'>...</div>", unsafe_allow_html=True)
         top_unis = get_top_universes_by_momentum()
         loading.empty()
-        for _, row in top_unis.iterrows():
-            st.markdown(f"### {row['Stock Universe']} ({row['Average Momentum Score']:.4f})")
-            top5 = get_top_stocks_from_universe(row['
-::contentReference[oaicite:17]{index=17}
+    for _, row in top_unis.iterrows():
+        st.markdown(f"### {row['Stock Universe']} ({row['Average Momentum Score']:.4f})")
+        top5 = get_top_stocks_from_universe(row['Stock Universe'], STOCK_UNIVERSE[row['Stock Universe']])
+        if not top5.empty:
+            st.dataframe(top5.head(5).style.format({
+                "3-Month Return (%)": "{:.2f}%",
+                "1-Month Return (%)": "{:.2f}%",
+                "1-Week Return (%)": "{:.2f}%",
+                "Annualized Volatility": "{:.4f}",
+                "Momentum Score": "{:.4f}"
+            }), use_container_width=True)
+
  
