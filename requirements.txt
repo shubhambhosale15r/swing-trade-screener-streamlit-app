@@ -5,3 +5,4 @@ numpy
 plotly
 tqdm
 fyers_apiv3
+stqdm
