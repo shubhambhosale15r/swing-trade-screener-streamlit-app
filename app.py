@@ -123,18 +123,32 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
                 "range_to": end_date.strftime("%Y-%m-%d"),
                 "cont_flag": "1"
             }
+            # Make the API call
             response = fyers.history(data)
+
+            # Debug: Log the response to check if it's valid
+            print(f"Response for {ticker}: {response}")
+
+            if response.get('error'):
+                print(f"Error response for {ticker}: {response['error']}")
+                continue
+
             candles = response.get("candles", [])
             if not candles:
+                print(f"No data returned for {ticker}")
                 raise ValueError(f"No data for {ticker}")
 
+            # Convert the response to a DataFrame
             df = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
             df["Date"] = pd.to_datetime(df["timestamp"], unit="s")
             df.set_index("Date", inplace=True)
             df.sort_index(inplace=True)
             df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+
             return df.reset_index()
-        except Exception:
+        except Exception as e:
+            # Debug: Log the error message for troubleshooting
+            print(f"Error fetching data for {ticker}: {e}")
             time.sleep(1)
             continue
 
