@@ -106,9 +106,16 @@ fyers = initialize_fyers()
 def download_stock_data(ticker, start_date, end_date, retries=3):
     """
     Fetch daily OHLCV for `ticker` from Fyers between start_date and end_date.
+    Limits the date range to a maximum of 90 days.
     """
     if fyers is None:
         return pd.DataFrame()
+
+    # Enforce a maximum date range of 90 days
+    date_diff = (end_date - start_date).days
+    if date_diff > 90:
+        print(f"Date range is too large ({date_diff} days). Limiting to 90 days.")
+        end_date = start_date + timedelta(days=90)  # Limit the date range to 90 days
 
     symbol = f"NSE:{ticker}-EQ"
     start_timestamp = int(datetime.combine(start_date, datetime.min.time()).timestamp())
@@ -129,12 +136,6 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
 
             # Debug: Log the response to check if it's valid
             print(f"Response for {ticker}: {response}")
-
-            # If the range is too large, retry with a smaller range
-            if 'error' in response and 'range_to cannot be 366 days greater than range_from' in response['error']:
-                print(f"Error: Date range too large for {ticker}, retrying with smaller range.")
-                start_date = start_date - timedelta(days=180)  # Shrink the date range by 180 days
-                continue
 
             if response.get('error'):
                 print(f"Error response for {ticker}: {response['error']}")
