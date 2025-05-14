@@ -101,6 +101,7 @@ def initialize_fyers():
 fyers = initialize_fyers()
 
 # --- Data Download via Fyers API ---
+# Download stock data from Fyers API
 @st.cache_data(show_spinner=False)
 def download_stock_data(ticker, start_date, end_date, retries=3):
     """
@@ -153,6 +154,7 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
             continue
 
     return pd.DataFrame()
+
 
 # Calculate returns over n trading days
 def calculate_returns(df, period):
