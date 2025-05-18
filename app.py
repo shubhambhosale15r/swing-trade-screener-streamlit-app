@@ -52,45 +52,45 @@ def display_header():
 display_header()
 
 def create_sidebar():
-with st.sidebar:
-    token_input = st.text_input("Enter Fyers Access Token", type="password")
-    if token_input:
-        st.session_state.fyers_access_token = token_input
-    universe_name = st.radio("Select Stock Universe", list(STOCK_UNIVERSE.keys()))
-    selected_symbols = STOCK_UNIVERSE[universe_name]
-    st.info(f"Selected: {universe_name}")
-
-    if st.button("Analyze Stock Universe"):
-        # Reset others
-        st.session_state.view_universe_rankings = False
-        st.session_state.view_recommended_stocks = False
-        st.session_state.view_high_momentum_stocks = False
-        st.session_state.analyze_button_clicked = True
-        st.experimental_rerun()
-
-    if st.button("Stock Universes Ranks"):
-        # Reset others
-        st.session_state.analyze_button_clicked = False
-        st.session_state.view_recommended_stocks = False
-        st.session_state.view_high_momentum_stocks = False
-        st.session_state.view_universe_rankings = True
-        st.experimental_rerun()
-
-    if st.button("Recommended Stocks"):
-        # Reset others
-        st.session_state.analyze_button_clicked = False
-        st.session_state.view_universe_rankings = False
-        st.session_state.view_high_momentum_stocks = False
-        st.session_state.view_recommended_stocks = True
-        st.experimental_rerun()
-
-    if st.button("High Momentum Stocks"):
-        # Reset others
-        st.session_state.analyze_button_clicked = False
-        st.session_state.view_universe_rankings = False
-        st.session_state.view_recommended_stocks = False
-        st.session_state.view_high_momentum_stocks = True
-        st.experimental_rerun()
+    with st.sidebar:
+        token_input = st.text_input("Enter Fyers Access Token", type="password")
+        if token_input:
+            st.session_state.fyers_access_token = token_input
+        universe_name = st.radio("Select Stock Universe", list(STOCK_UNIVERSE.keys()))
+        selected_symbols = STOCK_UNIVERSE[universe_name]
+        st.info(f"Selected: {universe_name}")
+    
+        if st.button("Analyze Stock Universe"):
+            # Reset others
+            st.session_state.view_universe_rankings = False
+            st.session_state.view_recommended_stocks = False
+            st.session_state.view_high_momentum_stocks = False
+            st.session_state.analyze_button_clicked = True
+            st.experimental_rerun()
+    
+        if st.button("Stock Universes Ranks"):
+            # Reset others
+            st.session_state.analyze_button_clicked = False
+            st.session_state.view_recommended_stocks = False
+            st.session_state.view_high_momentum_stocks = False
+            st.session_state.view_universe_rankings = True
+            st.experimental_rerun()
+    
+        if st.button("Recommended Stocks"):
+            # Reset others
+            st.session_state.analyze_button_clicked = False
+            st.session_state.view_universe_rankings = False
+            st.session_state.view_high_momentum_stocks = False
+            st.session_state.view_recommended_stocks = True
+            st.experimental_rerun()
+    
+        if st.button("High Momentum Stocks"):
+            # Reset others
+            st.session_state.analyze_button_clicked = False
+            st.session_state.view_universe_rankings = False
+            st.session_state.view_recommended_stocks = False
+            st.session_state.view_high_momentum_stocks = True
+            st.experimental_rerun()
 
 
     return universe_name, selected_symbols
