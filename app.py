@@ -66,7 +66,7 @@ def create_sidebar():
             st.session_state.view_recommended_stocks = False
             st.session_state.view_high_momentum_stocks = False
             st.session_state.analyze_button_clicked = True
-            st.experimental_rerun()
+            st.rerun()
     
         if st.button("Stock Universes Ranks"):
             # Reset others
@@ -74,7 +74,7 @@ def create_sidebar():
             st.session_state.view_recommended_stocks = False
             st.session_state.view_high_momentum_stocks = False
             st.session_state.view_universe_rankings = True
-            st.experimental_rerun()
+            st.rerun()
     
         if st.button("Recommended Stocks"):
             # Reset others
@@ -82,7 +82,7 @@ def create_sidebar():
             st.session_state.view_universe_rankings = False
             st.session_state.view_high_momentum_stocks = False
             st.session_state.view_recommended_stocks = True
-            st.experimental_rerun()
+            st.rerun()
     
         if st.button("High Momentum Stocks"):
             # Reset others
@@ -90,7 +90,7 @@ def create_sidebar():
             st.session_state.view_universe_rankings = False
             st.session_state.view_recommended_stocks = False
             st.session_state.view_high_momentum_stocks = True
-            st.experimental_rerun()
+            st.rerun()
 
 
     return universe_name, selected_symbols
