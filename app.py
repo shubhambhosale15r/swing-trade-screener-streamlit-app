@@ -211,19 +211,18 @@ def get_top_stocks_from_universe(name, symbols):
 
 def get_top_momentum_stocks_overall():
     all_dfs = []
-    for syms in stqdm(STOCK_UNIVERSE.values(), desc="Processing All Universes", leave=False):
-        df, _ = analyze_universe(None, syms)
+    for name, syms in stqdm(STOCK_UNIVERSE.items(), desc="Processing All Universes", leave=False):
+        df, _ = analyze_universe(name, syms)
         if not df.empty:
             all_dfs.append(df)
-
     if not all_dfs:
         return pd.DataFrame()
-
     combined = pd.concat(all_dfs, ignore_index=True)
     combined.dropna(subset=["Momentum Score"], inplace=True)
     combined.sort_values("Momentum Score", ascending=False, inplace=True)
     unique = combined.drop_duplicates(subset=["Ticker"], keep="first")
     return unique.head(10)
+
 
 def main():
     if st.session_state.analyze_button_clicked:
