@@ -177,6 +177,7 @@ def calculate_returns(df, period):
         print(f"Return calculation error: {e}")
         return np.nan
 
+@st.cache_data(show_spinner=False)
 def analyze_universe(name, symbols):
     end = datetime.today().date()
     start = end - timedelta(days=400)
