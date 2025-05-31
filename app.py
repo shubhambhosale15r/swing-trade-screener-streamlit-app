@@ -35,7 +35,26 @@ initialize_session_state()
 def inject_custom_css():
     st.markdown(f"""
         <style>
-            /* Add your custom CSS here */
+            .loading-container {{
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 2rem;
+            }}
+            .spinner {{
+                border: 4px solid rgba(0, 0, 0, 0.1);
+                border-radius: 50%;
+                border-top: 4px solid #3498db;
+                width: 40px;
+                height: 40px;
+                animation: spin 1s linear infinite;
+                margin-bottom: 1rem;
+            }}
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -53,54 +72,51 @@ display_header()
 
 def create_sidebar():
     with st.sidebar:
-        token_input = st.text_input("Enter Fyers Access Token", type="password")
+        token_input = st.text_input("Enter Fyers Access Token", type="password", value=st.session_state.fyers_access_token)
         if token_input:
             st.session_state.fyers_access_token = token_input
         universe_name = st.radio("Select Stock Universe", list(STOCK_UNIVERSE.keys()))
-        selected_symbols = STOCK_UNIVERSE[universe_name]
         st.info(f"Selected: {universe_name}")
     
-        if st.button("Analyze Stock Universe"):
-            # Reset others
-            st.session_state.view_universe_rankings = False
-            st.session_state.view_recommended_stocks = False
-            st.session_state.view_high_momentum_stocks = False
-            st.session_state.analyze_button_clicked = True
-            st.rerun()
-    
-        if st.button("Stock Universes Ranks"):
-            # Reset others
-            st.session_state.analyze_button_clicked = False
-            st.session_state.view_recommended_stocks = False
-            st.session_state.view_high_momentum_stocks = False
-            st.session_state.view_universe_rankings = True
-            st.rerun()
-    
-        if st.button("Recommended Stocks"):
-            # Reset others
-            st.session_state.analyze_button_clicked = False
-            st.session_state.view_universe_rankings = False
-            st.session_state.view_high_momentum_stocks = False
-            st.session_state.view_recommended_stocks = True
-            st.rerun()
-    
-        if st.button("High Momentum Stocks"):
-            # Reset others
-            st.session_state.analyze_button_clicked = False
-            st.session_state.view_universe_rankings = False
-            st.session_state.view_recommended_stocks = False
-            st.session_state.view_high_momentum_stocks = True
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Analyze Stock Universe", use_container_width=True):
+                st.session_state.view_universe_rankings = False
+                st.session_state.view_recommended_stocks = False
+                st.session_state.view_high_momentum_stocks = False
+                st.session_state.analyze_button_clicked = True
+                st.rerun()
+            
+            if st.button("Stock Universes Ranks", use_container_width=True):
+                st.session_state.analyze_button_clicked = False
+                st.session_state.view_recommended_stocks = False
+                st.session_state.view_high_momentum_stocks = False
+                st.session_state.view_universe_rankings = True
+                st.rerun()
+                
+        with col2:
+            if st.button("Recommended Stocks", use_container_width=True):
+                st.session_state.analyze_button_clicked = False
+                st.session_state.view_universe_rankings = False
+                st.session_state.view_high_momentum_stocks = False
+                st.session_state.view_recommended_stocks = True
+                st.rerun()
+            
+            if st.button("High Momentum Stocks", use_container_width=True):
+                st.session_state.analyze_button_clicked = False
+                st.session_state.view_universe_rankings = False
+                st.session_state.view_recommended_stocks = False
+                st.session_state.view_high_momentum_stocks = True
+                st.rerun()
 
+    return universe_name
 
-    return universe_name, selected_symbols
-
-stock_universe_name, selected_stocks = create_sidebar()
+stock_universe_name = create_sidebar()
 
 def initialize_fyers():
     if st.session_state.fyers_access_token:
         fyers = fyersModel.FyersModel(
-            client_id="YOUR_CLIENT_ID",
+            client_id="YOUR_CLIENT_ID",  # Replace with your actual client ID
             token=st.session_state.fyers_access_token,
             log_path="/tmp/"
         )
@@ -183,8 +199,6 @@ def analyze_universe(name, symbols):
     start = end - timedelta(days=400)
     rows = []
 
-    st.write(f"Analyzing universe: {name}...")
-
     for t in stqdm(symbols, desc="Processing symbols", leave=False):
         df = download_stock_data(t, start, end)
         if df.empty:
@@ -243,15 +257,24 @@ def get_top_momentum_stocks_overall():
     unique = combined.drop_duplicates(subset=["Ticker"], keep="first")
     return unique.head(10)
 
+def display_loading():
+    return st.markdown(f"""
+        <div class='loading-container'>
+            <div class="spinner"></div>
+            <div>{LOADING_TEXT}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
 def main():
+    # Analyze Stock Universe section
     if st.session_state.analyze_button_clicked:
         st.subheader(f"Momentum Analysis: {stock_universe_name}")
-        placeholder = st.empty()
-        with placeholder:
-            st.markdown(f"<div class='loading-container'>{LOADING_TEXT}</div>", unsafe_allow_html=True)
-        df, _ = analyze_universe(stock_universe_name, selected_stocks)
-        placeholder.empty()
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        
+        df, _ = analyze_universe(stock_universe_name, STOCK_UNIVERSE[stock_universe_name])
+        
+        loading_placeholder.empty()
         if not df.empty:
             df = df.sort_values("Momentum Score", ascending=False)
             st.dataframe(df.style.format({
@@ -264,30 +287,67 @@ def main():
             st.warning("No data available.")
         st.session_state.analyze_button_clicked = False
 
-    if st.session_state.view_recommended_stocks:
-        st.subheader("Stock Universes Based on Momentum")
-        loading = st.empty()
-        loading.markdown("<div class='loading-container'>...</div>", unsafe_allow_html=True)
+    # Stock Universes Ranks section
+    if st.session_state.view_universe_rankings:
+        st.subheader("Stock Universes Rankings by Average Momentum")
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        
         top_unis = get_top_universes_by_momentum()
-        loading.empty()
-        for _, row in top_unis.iterrows():
-            st.markdown(f"### {row['Stock Universe']} ({row['Average Momentum Score']:.4f})")
-            top5 = get_top_stocks_from_universe(row['Stock Universe'], STOCK_UNIVERSE[row['Stock Universe']])
-            if not top5.empty:
-                st.dataframe(top5.head(5).style.format({
-                    "3-Month Return (%)": "{:.2f}%",
-                    "1-Month Return (%)": "{:.2f}%",
-                    "1-Week Return (%)": "{:.2f}%",
-                    "Annualized Volatility": "{:.4f}",
-                    "Momentum Score": "{:.4f}"
-                }), use_container_width=True)
-     # View top high momentum stocks
+        
+        loading_placeholder.empty()
+        if not top_unis.empty:
+            st.dataframe(top_unis.style.format({"Average Momentum Score": "{:.4f}"}), 
+                         use_container_width=True)
+        else:
+            st.warning("No data available for universes ranking.")
+        st.session_state.view_universe_rankings = False
+
+    # Recommended Stocks section
+    if st.session_state.view_recommended_stocks:
+        st.subheader("Recommended Stocks (Top 5 from Top 3 Universes)")
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        
+        top_unis = get_top_universes_by_momentum().head(3)
+        
+        loading_placeholder.empty()
+        if top_unis.empty:
+            st.warning("No universe data available.")
+        else:
+            for index, row in top_unis.iterrows():
+                st.markdown(f"### {row['Stock Universe']} (Avg Score: {row['Average Momentum Score']:.4f})")
+                
+                universe_loading = st.empty()
+                universe_loading.markdown(display_loading(), unsafe_allow_html=True)
+                
+                top5 = get_top_stocks_from_universe(
+                    row['Stock Universe'], 
+                    STOCK_UNIVERSE[row['Stock Universe']]
+                )
+                
+                universe_loading.empty()
+                if not top5.empty:
+                    st.dataframe(top5.head(5).style.format({
+                        "3-Month Return (%)": "{:.2f}%",
+                        "1-Month Return (%)": "{:.2f}%",
+                        "1-Week Return (%)": "{:.2f}%",
+                        "Annualized Volatility": "{:.4f}",
+                        "Momentum Score": "{:.4f}"
+                    }), use_container_width=True)
+                else:
+                    st.write(f"No stocks data for {row['Stock Universe']}")
+        st.session_state.view_recommended_stocks = False
+
+    # High Momentum Stocks section
     if st.session_state.view_high_momentum_stocks:
         st.subheader("Top 10 High Momentum Stocks (Across All Universes)")
-        loading = st.empty()
-        loading.markdown("<div class='loading-container'>Loading...</div>", unsafe_allow_html=True)
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        
         top_momentum = get_top_momentum_stocks_overall()
-        loading.empty()
+        
+        loading_placeholder.empty()
         if not top_momentum.empty:
             st.dataframe(top_momentum.style.format({
                 "3-Month Return (%)": "{:.2f}%",
