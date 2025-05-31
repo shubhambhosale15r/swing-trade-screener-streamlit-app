@@ -8,10 +8,15 @@ from datetime import datetime, timedelta
 from fyers_apiv3 import fyersModel
 from stocklist import STOCK_UNIVERSE
 from stqdm import stqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from collections import deque
 
 PAGE_TITLE = "Swing Trade"
 PAGE_ICON = "📈"
 LOADING_TEXT = "Analyzing Stocks..."
+MAX_REQUESTS_PER_SECOND = 10
+MAX_REQUESTS_PER_MINUTE = 190
 
 st.set_page_config(
     page_title=PAGE_TITLE,
@@ -19,6 +24,49 @@ st.set_page_config(
     layout="wide",
     menu_items=None,
 )
+
+# Enhanced rate limiter implementation
+class RateLimiter:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.request_times = deque()
+        self.minute_request_times = deque()
+        
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            
+            # Handle per-second limit
+            while self.request_times and self.request_times[0] <= now - 1:
+                self.request_times.popleft()
+                
+            if len(self.request_times) >= MAX_REQUESTS_PER_SECOND:
+                oldest = self.request_times[0]
+                wait_time = 1 - (now - oldest)
+                if wait_time > 0:
+                    time.sleep(wait_time)
+                    now = time.time()
+            
+            # Handle per-minute limit
+            while self.minute_request_times and self.minute_request_times[0] <= now - 60:
+                self.minute_request_times.popleft()
+                
+            if len(self.minute_request_times) >= MAX_REQUESTS_PER_MINUTE:
+                oldest_min = self.minute_request_times[0]
+                wait_time_min = 60 - (now - oldest_min)
+                if wait_time_min > 0:
+                    time.sleep(wait_time_min)
+                    now = time.time()
+                    # Re-validate after wait
+                    while self.minute_request_times and self.minute_request_times[0] <= now - 60:
+                        self.minute_request_times.popleft()
+            
+            # Record current request times
+            self.request_times.append(now)
+            self.minute_request_times.append(now)
+
+# Global rate limiter
+fyers_rate_limiter = RateLimiter()
 
 def initialize_session_state():
     if 'view_universe_rankings' not in st.session_state:
@@ -135,59 +183,83 @@ def initialize_fyers():
 fyers = initialize_fyers()
 
 @st.cache_data(show_spinner=False)
-def download_stock_data(ticker, start_date, end_date, retries=5):
+def download_stock_data(ticker, start_date, end_date, retries=5):  # Increased retries
     if fyers is None:
         return pd.DataFrame()
 
     symbol = f"NSE:{ticker}-EQ"
-    
-    for attempt in range(retries):
-        try:
-            data = {
-                "symbol": symbol,
-                "resolution": "D",
-                "date_format": "1",
-                "range_from": start_date.strftime("%Y-%m-%d"),
-                "range_to": end_date.strftime("%Y-%m-%d"),
-                "cont_flag": "1"
-            }
-            response = fyers.history(data)
-            
-            # Check for API errors
-            if response.get("s") == "error":
-                error_msg = response.get("message", "Unknown error")
-                print(f"API error for {ticker}: {error_msg}")
-                if "Invalid symbol" in error_msg:
-                    return pd.DataFrame()  # Skip invalid symbols
-                if "request limit reached" in error_msg:
-                    # Add extra delay for rate limit errors
-                    time.sleep(5)
-                    continue
-                return pd.DataFrame()
-            
-            candles = response.get("candles", [])
-            if not candles:
-                print(f"No candles returned for {ticker}")
-                return pd.DataFrame()
+    all_data = []
+    current_start = start_date
+    total_chunks = 0
+    successful_chunks = 0
 
-            df = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
-            df["Date"] = pd.to_datetime(df["timestamp"], unit="s")
-            df.set_index("Date", inplace=True)
-            df.sort_index(inplace=True)
+    while current_start <= end_date:
+        total_chunks += 1
+        current_end = min(current_start + timedelta(days=89), end_date)
+
+        for attempt in range(retries):
+            try:
+                # Enforce API rate limiting
+                fyers_rate_limiter.wait()
+                
+                data = {
+                    "symbol": symbol,
+                    "resolution": "D",
+                    "date_format": "1",
+                    "range_from": current_start.strftime("%Y-%m-%d"),
+                    "range_to": current_end.strftime("%Y-%m-%d"),
+                    "cont_flag": "1"
+                }
+                response = fyers.history(data)
+                
+                # Check for API errors
+                if response.get("s") == "error":
+                    error_msg = response.get("message", "Unknown error")
+                    print(f"API error for {ticker}: {error_msg}")
+                    if "Invalid symbol" in error_msg:
+                        return pd.DataFrame()  # Skip invalid symbols
+                    if "request limit reached" in error_msg:
+                        # Add extra delay for rate limit errors
+                        time.sleep(0.2)
+                        continue
+                    break
+                
+                candles = response.get("candles", [])
+                if not candles:
+                    print(f"No candles returned for {ticker} ({current_start} to {current_end})")
+                    break
+
+                df_chunk = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
+                df_chunk["Date"] = pd.to_datetime(df_chunk["timestamp"], unit="s")
+                all_data.append(df_chunk)
+                successful_chunks += 1
+                break  # Success - exit retry loop
             
-            # Remove duplicates while preserving order
-            df = df[~df.index.duplicated(keep='first')]
-            
-            print(f"Downloaded {len(df)} records for {ticker}")
-            return df[["Open", "High", "Low", "Close", "Volume"]].reset_index()
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed for {ticker}: {e}")
+                if attempt < retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff: 2, 4, 8, 16 seconds
+                else:
+                    print(f"All retries failed for {ticker} chunk {current_start} to {current_end}")
+        else:
+            print(f"No data for {ticker} in range {current_start} to {current_end}")
         
-        except Exception as e:
-            print(f"Attempt {attempt+1} failed for {ticker}: {e}")
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff: 2, 4, 8, 16 seconds
-            else:
-                print(f"All retries failed for {ticker}")
-                return pd.DataFrame()
+        current_start = current_end + timedelta(days=1)
+
+    if not all_data:
+        print(f"Failed to get any data for {ticker}. Success: {successful_chunks}/{total_chunks} chunks")
+        return pd.DataFrame()
+
+    full_df = pd.concat(all_data, ignore_index=True)
+    full_df["Date"] = pd.to_datetime(full_df["timestamp"], unit="s")
+    full_df.set_index("Date", inplace=True)
+    full_df.sort_index(inplace=True)
+    
+    # Remove duplicates while preserving order
+    full_df = full_df[~full_df.index.duplicated(keep='first')]
+    
+    print(f"Downloaded {len(full_df)} records for {ticker}")
+    return full_df[["Open", "High", "Low", "Close", "Volume"]].reset_index()
 
 def calculate_returns(df, period):
     try:
@@ -236,9 +308,9 @@ def process_symbol(t, start, end):
         # Calculate momentum score with available data
         if pd.notna(vol) and vol > 0:
             # Use available returns, default to 0 if missing
-            mom = ((0.6 * (r3 if pd.notna(r3) else 0)) + 
-                   (0.3 * (r1 if pd.notna(r1) else 0)) + 
-                   (0.1 * (r0 if pd.notna(r0) else 0))) / vol
+            mom = ((0.6 * (r3 if pd.notna(r3) else 0) + 
+                   (0.3 * (r1 if pd.notna(r1) else 0) + 
+                   (0.1 * (r0 if pd.notna(r0) else 0)) / vol
         else:
             mom = np.nan
 
@@ -262,18 +334,23 @@ def analyze_universe(name, symbols):
     end = datetime.today().date()
     start = end - timedelta(days=400)
     rows = []
-    
-    # Create progress bar
-    progress_bar = stqdm(total=len(symbols), desc=f"Processing {name}")
-    
-    # Process symbols sequentially
-    for t in symbols:
-        result = process_symbol(t, start, end)
-        if result is not None:
-            rows.append(result)
-        progress_bar.update(1)
-    
-    progress_bar.close()
+
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=1) as executor:  # Reduced workers for better rate control
+        # Submit all tasks
+        futures = {executor.submit(process_symbol, t, start, end): t for t in symbols}
+        
+        # Create progress bar
+        progress_bar = stqdm(total=len(symbols), desc=f"Processing {name}")
+        
+        # Process completed tasks
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                rows.append(result)
+            progress_bar.update(1)
+        
+        progress_bar.close()
 
     if not rows:
         return pd.DataFrame(), np.nan
