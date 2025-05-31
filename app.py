@@ -308,9 +308,9 @@ def process_symbol(t, start, end):
         # Calculate momentum score with available data
         if pd.notna(vol) and vol > 0:
             # Use available returns, default to 0 if missing
-            mom = ((0.6 * (r3 if pd.notna(r3) else 0) + 
-                   (0.3 * (r1 if pd.notna(r1) else 0) + 
-                   (0.1 * (r0 if pd.notna(r0) else 0)) / vol
+            mom = ((0.6 * (r3 if pd.notna(r3) else 0)) + 
+                   (0.3 * (r1 if pd.notna(r1) else 0)) + 
+                   (0.1 * (r0 if pd.notna(r0) else 0))) / vol
         else:
             mom = np.nan
 
