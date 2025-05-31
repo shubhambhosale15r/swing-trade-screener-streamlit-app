@@ -8,14 +8,10 @@ from datetime import datetime, timedelta
 from fyers_apiv3 import fyersModel
 from stocklist import STOCK_UNIVERSE
 from stqdm import stqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-from collections import deque
 
 PAGE_TITLE = "Swing Trade"
 PAGE_ICON = "📈"
 LOADING_TEXT = "Analyzing Stocks..."
-MAX_REQUESTS_PER_MINUTE = 50  # Fyers API limit
 
 st.set_page_config(
     page_title=PAGE_TITLE,
@@ -23,37 +19,6 @@ st.set_page_config(
     layout="wide",
     menu_items=None,
 )
-
-# Rate limiter implementation
-class RateLimiter:
-    def __init__(self, max_calls, period):
-        self.max_calls = max_calls
-        self.period = period
-        self.lock = threading.Lock()
-        self.request_times = deque()
-        
-    def wait(self):
-        with self.lock:
-            now = time.time()
-            # Remove timestamps older than the period
-            while self.request_times and self.request_times[0] <= now - self.period:
-                self.request_times.popleft()
-                
-            if len(self.request_times) >= self.max_calls:
-                oldest = self.request_times[0]
-                wait_time = self.period - (now - oldest)
-                if wait_time > 0:
-                    time.sleep(wait_time)
-                    now = time.time()
-                    
-                # Remove expired timestamps again after waiting
-                while self.request_times and self.request_times[0] <= now - self.period:
-                    self.request_times.popleft()
-                    
-            self.request_times.append(now)
-
-# Global rate limiter (50 requests per minute)
-fyers_rate_limiter = RateLimiter(MAX_REQUESTS_PER_MINUTE, 60)
 
 def initialize_session_state():
     if 'view_universe_rankings' not in st.session_state:
@@ -170,76 +135,66 @@ def initialize_fyers():
 fyers = initialize_fyers()
 
 @st.cache_data(show_spinner=False)
-def download_stock_data(ticker, start_date, end_date, retries=3):
+def download_stock_data(ticker, start_date, end_date, retries=5):
     if fyers is None:
         return pd.DataFrame()
 
     symbol = f"NSE:{ticker}-EQ"
-    all_data = []
-    current_start = start_date
-
-    while current_start <= end_date:
-        current_end = min(current_start + timedelta(days=89), end_date)
-
-        for attempt in range(retries):
-            try:
-                # Enforce API rate limiting
-                fyers_rate_limiter.wait()
-                
-                data = {
-                    "symbol": symbol,
-                    "resolution": "D",
-                    "date_format": "1",
-                    "range_from": current_start.strftime("%Y-%m-%d"),
-                    "range_to": current_end.strftime("%Y-%m-%d"),
-                    "cont_flag": "1"
-                }
-                response = fyers.history(data)
-                
-                # Check for API errors
-                if response.get("s") == "error":
-                    error_msg = response.get("message", "Unknown error")
-                    print(f"API error for {ticker}: {error_msg}")
-                    if "Invalid symbol" in error_msg:
-                        return pd.DataFrame()  # Skip invalid symbols
-                    break
-                
-                candles = response.get("candles", [])
-                if not candles:
-                    print(f"No candles returned for {ticker} ({current_start} to {current_end})")
-                    break
-
-                df_chunk = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
-                df_chunk["Date"] = pd.to_datetime(df_chunk["timestamp"], unit="s")
-                all_data.append(df_chunk)
-                break  # Success - exit retry loop
+    
+    for attempt in range(retries):
+        try:
+            data = {
+                "symbol": symbol,
+                "resolution": "D",
+                "date_format": "1",
+                "range_from": start_date.strftime("%Y-%m-%d"),
+                "range_to": end_date.strftime("%Y-%m-%d"),
+                "cont_flag": "1"
+            }
+            response = fyers.history(data)
             
-            except Exception as e:
-                print(f"Attempt {attempt+1} failed for {ticker}: {e}")
-                if attempt < retries - 1:
-                    time.sleep(2)  # Wait before retrying
-                else:
-                    print(f"All retries failed for {ticker}")
-        else:
-            print(f"No data for {ticker} in range")
+            # Check for API errors
+            if response.get("s") == "error":
+                error_msg = response.get("message", "Unknown error")
+                print(f"API error for {ticker}: {error_msg}")
+                if "Invalid symbol" in error_msg:
+                    return pd.DataFrame()  # Skip invalid symbols
+                if "request limit reached" in error_msg:
+                    # Add extra delay for rate limit errors
+                    time.sleep(5)
+                    continue
+                return pd.DataFrame()
+            
+            candles = response.get("candles", [])
+            if not candles:
+                print(f"No candles returned for {ticker}")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
+            df["Date"] = pd.to_datetime(df["timestamp"], unit="s")
+            df.set_index("Date", inplace=True)
+            df.sort_index(inplace=True)
+            
+            # Remove duplicates while preserving order
+            df = df[~df.index.duplicated(keep='first')]
+            
+            print(f"Downloaded {len(df)} records for {ticker}")
+            return df[["Open", "High", "Low", "Close", "Volume"]].reset_index()
         
-        current_start = current_end + timedelta(days=1)
-
-    if not all_data:
-        return pd.DataFrame()
-
-    full_df = pd.concat(all_data, ignore_index=True)
-    full_df["Date"] = pd.to_datetime(full_df["timestamp"], unit="s")
-    full_df.set_index("Date", inplace=True)
-    full_df.sort_index(inplace=True)
-    return full_df[["Open", "High", "Low", "Close", "Volume"]].reset_index()
+        except Exception as e:
+            print(f"Attempt {attempt+1} failed for {ticker}: {e}")
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff: 2, 4, 8, 16 seconds
+            else:
+                print(f"All retries failed for {ticker}")
+                return pd.DataFrame()
 
 def calculate_returns(df, period):
-    df = df.dropna(subset=['Close']).copy()
-    df.sort_index(inplace=True)
-    if len(df) < period:
-        return np.nan
     try:
+        df = df.dropna(subset=['Close']).copy()
+        df.sort_index(inplace=True)
+        if len(df) < period:
+            return np.nan
         return (df['Close'].iloc[-1] / df['Close'].iloc[-period]) - 1
     except Exception as e:
         print(f"Return calculation error: {e}")
@@ -249,25 +204,47 @@ def process_symbol(t, start, end):
     try:
         df = download_stock_data(t, start, end)
         if df.empty:
+            print(f"No data available for {t}")
             return None
 
         df['Date'] = pd.to_datetime(df['Date'])
         df.set_index('Date', inplace=True)
-        df = df[~df.index.duplicated(keep='first')]
+        
+        # Handle insufficient data
+        data_points = len(df)
+        min_required = max(63, 21, 5)  # 63 days is the longest period we need
+        
+        if data_points < 5:
+            print(f"Insufficient data ({data_points} points) for {t}")
+            return None
+        
+        # Calculate daily returns
         df['Daily Return'] = df['Close'].pct_change()
-        vol = df['Daily Return'].dropna().std() * np.sqrt(63)
-
-        r3 = calculate_returns(df, 63) if len(df) >= 63 else np.nan
-        r1 = calculate_returns(df, 21) if len(df) >= 21 else np.nan
-        r0 = calculate_returns(df, 5) if len(df) >= 5 else np.nan
-
-        if vol and pd.notna(r3) and pd.notna(r1) and pd.notna(r0):
-            mom = ((0.6 * r3) + (0.3 * r1) + (0.1 * r0)) / vol
+        
+        # Calculate volatility using available data
+        valid_returns = df['Daily Return'].dropna()
+        if len(valid_returns) < 5:
+            vol = np.nan
+        else:
+            vol = valid_returns.std() * np.sqrt(252)  # Annualized volatility
+        
+        # Calculate returns with fallbacks
+        r3 = calculate_returns(df, 63) if data_points >= 63 else np.nan
+        r1 = calculate_returns(df, 21) if data_points >= 21 else np.nan
+        r0 = calculate_returns(df, 5) if data_points >= 5 else np.nan
+        
+        # Calculate momentum score with available data
+        if pd.notna(vol) and vol > 0:
+            # Use available returns, default to 0 if missing
+            mom = ((0.6 * (r3 if pd.notna(r3) else 0) + 
+                   (0.3 * (r1 if pd.notna(r1) else 0) + 
+                   (0.1 * (r0 if pd.notna(r0) else 0)) / vol
         else:
             mom = np.nan
 
         return {
             "Ticker": t,
+            "Data Points": data_points,
             "Momentum Score": mom,
             "3-Month Return (%)": r3 * 100 if pd.notna(r3) else np.nan,
             "1-Month Return (%)": r1 * 100 if pd.notna(r1) else np.nan,
@@ -275,7 +252,9 @@ def process_symbol(t, start, end):
             "Annualized Volatility": vol
         }
     except Exception as e:
-        print(f"Error processing {t}: {e}")
+        print(f"Error processing {t}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 @st.cache_data(show_spinner=False)
@@ -283,25 +262,25 @@ def analyze_universe(name, symbols):
     end = datetime.today().date()
     start = end - timedelta(days=400)
     rows = []
+    
+    # Create progress bar
+    progress_bar = stqdm(total=len(symbols), desc=f"Processing {name}")
+    
+    # Process symbols sequentially
+    for t in symbols:
+        result = process_symbol(t, start, end)
+        if result is not None:
+            rows.append(result)
+        progress_bar.update(1)
+    
+    progress_bar.close()
 
-    # Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        # Submit all tasks
-        futures = {executor.submit(process_symbol, t, start, end): t for t in symbols}
+    if not rows:
+        return pd.DataFrame(), np.nan
         
-        # Create progress bar
-        progress_bar = stqdm(total=len(symbols), desc=f"Processing {name}")
-        
-        # Process completed tasks
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                rows.append(result)
-            progress_bar.update(1)
-        
-        progress_bar.close()
-
     df_res = pd.DataFrame(rows)
+    # Filter out stocks with no momentum score
+    df_res = df_res[df_res["Momentum Score"].notna()]
     avg_score = df_res["Momentum Score"].mean() if not df_res.empty else np.nan
     return df_res, avg_score
 
@@ -356,13 +335,14 @@ def main():
         if not df.empty:
             df = df.sort_values("Momentum Score", ascending=False)
             st.dataframe(df.style.format({
+                "Data Points": "{:.0f}",
                 "3-Month Return (%)": "{:.2f}%",
                 "1-Month Return (%)": "{:.2f}%",
                 "1-Week Return (%)": "{:.2f}%",
                 "Annualized Volatility": "{:.4f}",
                 "Momentum Score": "{:.4f}"}), use_container_width=True)
         else:
-            st.warning("No data available.")
+            st.warning("No data available for this universe.")
         st.session_state.analyze_button_clicked = False
 
     # Stock Universes Ranks section
@@ -415,6 +395,7 @@ def main():
                 
                 if not top5.empty:
                     st.dataframe(top5.head(5).style.format({
+                        "Data Points": "{:.0f}",
                         "3-Month Return (%)": "{:.2f}%",
                         "1-Month Return (%)": "{:.2f}%",
                         "1-Week Return (%)": "{:.2f}%",
@@ -439,6 +420,7 @@ def main():
         
         if not top_momentum.empty:
             st.dataframe(top_momentum.style.format({
+                "Data Points": "{:.0f}",
                 "3-Month Return (%)": "{:.2f}%",
                 "1-Month Return (%)": "{:.2f}%",
                 "1-Week Return (%)": "{:.2f}%",
