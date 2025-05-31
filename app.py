@@ -286,20 +286,25 @@ def get_top_momentum_stocks_overall():
     unique = combined.drop_duplicates(subset=["Ticker"], keep="first")
     return unique.head(10)
 
-def display_loading():
-    return st.markdown(f"""
-        <div class='loading-container'>
-            <div class="spinner"></div>
-            <div>{LOADING_TEXT}</div>
-        </div>
-    """, unsafe_allow_html=True)
+def display_loading(visible=True):
+    """Return loading animation only when visible is True"""
+    if visible:
+        return st.markdown(f"""
+            <div class='loading-container'>
+                <div class="spinner"></div>
+                <div>{LOADING_TEXT}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    return st.empty()
 
 def main():
     # Analyze Stock Universe section
     if st.session_state.analyze_button_clicked:
         st.subheader(f"Momentum Analysis: {stock_universe_name}")
         loading_placeholder = st.empty()
-        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        
+        # Only show loading when we start processing
+        loading_placeholder.markdown(display_loading(True), unsafe_allow_html=True)
         
         df, _ = analyze_universe(stock_universe_name, STOCK_UNIVERSE[stock_universe_name])
         
@@ -320,7 +325,7 @@ def main():
     if st.session_state.view_universe_rankings:
         st.subheader("Stock Universes Rankings by Average Momentum")
         loading_placeholder = st.empty()
-        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        loading_placeholder.markdown(display_loading(True), unsafe_allow_html=True)
         
         top_unis = get_top_universes_by_momentum()
         
@@ -336,7 +341,7 @@ def main():
     if st.session_state.view_recommended_stocks:
         st.subheader("Recommended Stocks (Top 5 from Top 3 Universes)")
         loading_placeholder = st.empty()
-        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        loading_placeholder.markdown(display_loading(True), unsafe_allow_html=True)
         
         top_unis = get_top_universes_by_momentum().head(3)
         
@@ -348,7 +353,7 @@ def main():
                 st.markdown(f"### {row['Stock Universe']} (Avg Score: {row['Average Momentum Score']:.4f})")
                 
                 universe_loading = st.empty()
-                universe_loading.markdown(display_loading(), unsafe_allow_html=True)
+                universe_loading.markdown(display_loading(True), unsafe_allow_html=True)
                 
                 top5 = get_top_stocks_from_universe(
                     row['Stock Universe'], 
@@ -372,7 +377,7 @@ def main():
     if st.session_state.view_high_momentum_stocks:
         st.subheader("Top 10 High Momentum Stocks (Across All Universes)")
         loading_placeholder = st.empty()
-        loading_placeholder.markdown(display_loading(), unsafe_allow_html=True)
+        loading_placeholder.markdown(display_loading(True), unsafe_allow_html=True)
         
         top_momentum = get_top_momentum_stocks_overall()
         
@@ -389,5 +394,18 @@ def main():
             st.warning("No high momentum data available.")
         st.session_state.view_high_momentum_stocks = False
 
+# Add this at the very end of your script
 if __name__ == "__main__":
-    main()
+    # Only show loading when processing, not on initial load
+    if any([
+        st.session_state.analyze_button_clicked,
+        st.session_state.view_universe_rankings,
+        st.session_state.view_recommended_stocks,
+        st.session_state.view_high_momentum_stocks
+    ]):
+        main()
+    else:
+        # Show initial state without loading animation
+        st.write("Select an option from the sidebar to begin analysis")
+
+
