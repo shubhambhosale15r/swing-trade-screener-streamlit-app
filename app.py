@@ -9,10 +9,13 @@ from fyers_apiv3 import fyersModel
 from stocklist import STOCK_UNIVERSE
 from stqdm import stqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from collections import deque
 
 PAGE_TITLE = "Swing Trade"
 PAGE_ICON = "📈"
 LOADING_TEXT = "Analyzing Stocks..."
+MAX_REQUESTS_PER_MINUTE = 190  # Fyers API limit
 
 st.set_page_config(
     page_title=PAGE_TITLE,
@@ -20,6 +23,37 @@ st.set_page_config(
     layout="wide",
     menu_items=None,
 )
+
+# Rate limiter implementation
+class RateLimiter:
+    def __init__(self, max_calls, period):
+        self.max_calls = max_calls
+        self.period = period
+        self.lock = threading.Lock()
+        self.request_times = deque()
+        
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            # Remove timestamps older than the period
+            while self.request_times and self.request_times[0] <= now - self.period:
+                self.request_times.popleft()
+                
+            if len(self.request_times) >= self.max_calls:
+                oldest = self.request_times[0]
+                wait_time = self.period - (now - oldest)
+                if wait_time > 0:
+                    time.sleep(wait_time)
+                    now = time.time()
+                    
+                # Remove expired timestamps again after waiting
+                while self.request_times and self.request_times[0] <= now - self.period:
+                    self.request_times.popleft()
+                    
+            self.request_times.append(now)
+
+# Global rate limiter (50 requests per minute)
+fyers_rate_limiter = RateLimiter(MAX_REQUESTS_PER_MINUTE, 60)
 
 def initialize_session_state():
     if 'view_universe_rankings' not in st.session_state:
@@ -149,8 +183,11 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
 
         for attempt in range(retries):
             try:
+                # Enforce API rate limiting
+                fyers_rate_limiter.wait()
+                
                 data = {
-                    "symbol": symbol,  # FIXED: Use variable not string
+                    "symbol": symbol,
                     "resolution": "D",
                     "date_format": "1",
                     "range_from": current_start.strftime("%Y-%m-%d"),
