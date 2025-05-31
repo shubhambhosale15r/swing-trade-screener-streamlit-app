@@ -150,7 +150,7 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
         for _ in range(retries):
             try:
                 data = {
-                    "symbol": f"NSE:{symbol}-EQ",
+                    "symbol": symbol",
                     "resolution": "D",
                     "date_format": "1",
                     "range_from": current_start.strftime("%Y-%m-%d"),
