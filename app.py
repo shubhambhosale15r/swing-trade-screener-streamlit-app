@@ -2,10 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
+import os
+import tempfile
 from datetime import datetime, timedelta
 from fyers_apiv3 import fyersModel
 from stocklist import STOCK_UNIVERSE
 from stqdm import stqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 PAGE_TITLE = "Swing Trade"
 PAGE_ICON = "📈"
@@ -115,10 +118,15 @@ stock_universe_name = create_sidebar()
 
 def initialize_fyers():
     if st.session_state.fyers_access_token:
+        # Create a proper log directory
+        temp_dir = tempfile.gettempdir()
+        log_dir = os.path.join(temp_dir, "fyers_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
         fyers = fyersModel.FyersModel(
             client_id="YOUR_CLIENT_ID",  # Replace with your actual client ID
             token=st.session_state.fyers_access_token,
-            log_path="/tmp/"
+            log_path=log_dir + os.sep  # Add trailing separator
         )
         return fyers
     else:
@@ -193,20 +201,15 @@ def calculate_returns(df, period):
         print(f"Return calculation error: {e}")
         return np.nan
 
-@st.cache_data(show_spinner=False)
-def analyze_universe(name, symbols):
-    end = datetime.today().date()
-    start = end - timedelta(days=400)
-    rows = []
-
-    for t in stqdm(symbols, desc="Processing symbols", leave=False):
+def process_symbol(t, start, end):
+    try:
         df = download_stock_data(t, start, end)
         if df.empty:
-            continue
+            return None
 
         df['Date'] = pd.to_datetime(df['Date'])
         df.set_index('Date', inplace=True)
-        df = df[~df.index.duplicated()]
+        df = df[~df.index.duplicated(keep='first')]
         df['Daily Return'] = df['Close'].pct_change()
         vol = df['Daily Return'].dropna().std() * np.sqrt(63)
 
@@ -219,14 +222,40 @@ def analyze_universe(name, symbols):
         else:
             mom = np.nan
 
-        rows.append({
+        return {
             "Ticker": t,
             "Momentum Score": mom,
             "3-Month Return (%)": r3 * 100 if pd.notna(r3) else np.nan,
             "1-Month Return (%)": r1 * 100 if pd.notna(r1) else np.nan,
             "1-Week Return (%)": r0 * 100 if pd.notna(r0) else np.nan,
             "Annualized Volatility": vol
-        })
+        }
+    except Exception as e:
+        print(f"Error processing {t}: {e}")
+        return None
+
+@st.cache_data(show_spinner=False)
+def analyze_universe(name, symbols):
+    end = datetime.today().date()
+    start = end - timedelta(days=400)
+    rows = []
+
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all tasks
+        futures = {executor.submit(process_symbol, t, start, end): t for t in symbols}
+        
+        # Create progress bar
+        progress_bar = stqdm(total=len(symbols), desc=f"Processing {name}")
+        
+        # Process completed tasks
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                rows.append(result)
+            progress_bar.update(1)
+        
+        progress_bar.close()
 
     df_res = pd.DataFrame(rows)
     avg_score = df_res["Momentum Score"].mean() if not df_res.empty else np.nan
