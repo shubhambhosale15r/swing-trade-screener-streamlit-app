@@ -285,7 +285,7 @@ def analyze_universe(name, symbols):
     rows = []
 
     # Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         # Submit all tasks
         futures = {executor.submit(process_symbol, t, start, end): t for t in symbols}
         
