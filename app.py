@@ -15,7 +15,7 @@ from collections import deque
 PAGE_TITLE = "Swing Trade"
 PAGE_ICON = "📈"
 LOADING_TEXT = "Analyzing Stocks..."
-MAX_REQUESTS_PER_MINUTE = 190  # Fyers API limit
+MAX_REQUESTS_PER_MINUTE = 50  # Fyers API limit
 
 st.set_page_config(
     page_title=PAGE_TITLE,
