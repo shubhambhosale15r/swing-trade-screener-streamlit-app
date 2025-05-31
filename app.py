@@ -124,7 +124,7 @@ def initialize_fyers():
         os.makedirs(log_dir, exist_ok=True)
         
         fyers = fyersModel.FyersModel(
-            client_id="YOUR_CLIENT_ID",  # Replace with your actual client ID
+            client_id="0F5WWD1SBL-100",  # Replace with your actual client ID
             token=st.session_state.fyers_access_token,
             log_path=log_dir + os.sep  # Add trailing separator
         )
@@ -147,10 +147,10 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
     while current_start <= end_date:
         current_end = min(current_start + timedelta(days=89), end_date)
 
-        for _ in range(retries):
+        for attempt in range(retries):
             try:
                 data = {
-                    "symbol": "symbol",
+                    "symbol": symbol,  # FIXED: Use variable not string
                     "resolution": "D",
                     "date_format": "1",
                     "range_from": current_start.strftime("%Y-%m-%d"),
@@ -158,37 +158,44 @@ def download_stock_data(ticker, start_date, end_date, retries=3):
                     "cont_flag": "1"
                 }
                 response = fyers.history(data)
-
-                if response.get("error"):
-                    print(f"Error response for {ticker}: {response['error']}")
+                
+                # Check for API errors
+                if response.get("s") == "error":
+                    error_msg = response.get("message", "Unknown error")
+                    print(f"API error for {ticker}: {error_msg}")
+                    if "Invalid symbol" in error_msg:
+                        return pd.DataFrame()  # Skip invalid symbols
                     break
-
+                
                 candles = response.get("candles", [])
                 if not candles:
-                    print(f"No candles returned for {ticker}")
+                    print(f"No candles returned for {ticker} ({current_start} to {current_end})")
                     break
 
                 df_chunk = pd.DataFrame(candles, columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
                 df_chunk["Date"] = pd.to_datetime(df_chunk["timestamp"], unit="s")
                 all_data.append(df_chunk)
-                break
+                break  # Success - exit retry loop
+            
             except Exception as e:
-                print(f"Error fetching data for {ticker}: {e}")
-                time.sleep(1)
-                continue
-
+                print(f"Attempt {attempt+1} failed for {ticker}: {e}")
+                if attempt < retries - 1:
+                    time.sleep(2)  # Wait before retrying
+                else:
+                    print(f"All retries failed for {ticker}")
+        else:
+            print(f"No data for {ticker} in range")
+        
         current_start = current_end + timedelta(days=1)
 
     if not all_data:
         return pd.DataFrame()
 
     full_df = pd.concat(all_data, ignore_index=True)
-    full_df = full_df.dropna()
     full_df["Date"] = pd.to_datetime(full_df["timestamp"], unit="s")
     full_df.set_index("Date", inplace=True)
     full_df.sort_index(inplace=True)
-    full_df = full_df[["Open", "High", "Low", "Close", "Volume"]]
-    return full_df.reset_index()
+    return full_df[["Open", "High", "Low", "Close", "Volume"]].reset_index()
 
 def calculate_returns(df, period):
     df = df.dropna(subset=['Close']).copy()
