@@ -336,31 +336,27 @@ def analyze_universe(name, symbols):
     start = end - timedelta(days=400)
     rows = []
 
-    # Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=1) as executor:  # Reduced workers for better rate control
-        # Submit all tasks
+    with ThreadPoolExecutor(max_workers=1) as executor:
         futures = {executor.submit(process_symbol, t, start, end): t for t in symbols}
-        
-        # Create progress bar
-        progress_bar = stqdm(total=len(symbols), desc=f"Processing {name}")
-        
-        # Process completed tasks
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                rows.append(result)
-            progress_bar.update(1)
-        
-        progress_bar.close()
+        progress_bar = st.progress(0)
+
+        try:
+            for i, future in enumerate(as_completed(futures)):
+                result = future.result()
+                if result is not None:
+                    rows.append(result)
+                progress_bar.progress((i + 1) / len(symbols))  # Correct usage
+        finally:
+            pass  # Removed progress_bar.close()
 
     if not rows:
         return pd.DataFrame(), np.nan
-        
+
     df_res = pd.DataFrame(rows)
-    # Filter out stocks with no momentum score
     df_res = df_res[df_res["Momentum Score"].notna()]
     avg_score = df_res["Momentum Score"].mean() if not df_res.empty else np.nan
     return df_res, avg_score
+
 
 def get_top_universes_by_momentum():
     data = []
