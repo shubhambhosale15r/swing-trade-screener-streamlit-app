@@ -441,7 +441,8 @@ def main():
         with loading_placeholder.container():
             display_loading()
         
-        top_unis = get_top_universes_by_momentum().head(10)
+        # top_unis = get_top_universes_by_momentum().head(10)
+        top_unis = get_top_universes_by_momentum()
         
         loading_placeholder.empty()
         
