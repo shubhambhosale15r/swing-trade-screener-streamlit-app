@@ -510,8 +510,9 @@ if __name__ == "__main__":
         st.session_state.view_high_momentum_stocks
     ]):
         # st.write("Select an option from the sidebar to begin analysis")
+      st.markdown(f"""      
         <div style="text-align: center; font-size: 1.2rem; color: #c0c0c0;">
-            Select an option from the sidebar to begin analysis<br>
+           Select an option from the sidebar to begin analysis.<br>
         </div>
     """, unsafe_allow_html=True)
     else:
