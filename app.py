@@ -321,7 +321,7 @@ def process_symbol(t, start, end):
             "3-Month Return (%)": r3 * 100 if pd.notna(r3) else np.nan,
             "1-Month Return (%)": r1 * 100 if pd.notna(r1) else np.nan,
             "1-Week Return (%)": r0 * 100 if pd.notna(r0) else np.nan,
-            "Annualized Volatility": vol
+            "Annualized Volatility": vol,
             "Price":df['Close'].tail(1)  # this line added
         }
     except Exception as e:
