@@ -322,6 +322,7 @@ def process_symbol(t, start, end):
             "1-Month Return (%)": r1 * 100 if pd.notna(r1) else np.nan,
             "1-Week Return (%)": r0 * 100 if pd.notna(r0) else np.nan,
             "Annualized Volatility": vol
+            "Price":df['Close'].tail(1)  # this line added
         }
     except Exception as e:
         print(f"Error processing {t}: {str(e)}")
@@ -478,6 +479,7 @@ def main():
                         "1-Week Return (%)": "{:.2f}%",
                         "Annualized Volatility": "{:.4f}",
                         "Momentum Score": "{:.4f}"
+                    
                     }), use_container_width=True)
                 else:
                     st.write(f"No stocks data for {row['Stock Universe']}")
